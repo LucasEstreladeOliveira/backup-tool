@@ -68,3 +68,9 @@ input[type="password"] { font: inherit; padding: 8px 10px; border-radius: 8px; b
 .current { margin: 14px 0 20px; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .details { margin-top: 14px; }
 .details pre { max-height: 260px; overflow: auto; padding: 10px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.device { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+input[type="text"] { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); margin: 0 8px; min-width: 220px; }
+input[type="text"]:disabled { opacity: 0.6; }
+.devices { margin: 6px 0 0; padding-left: 18px; }
+.badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.legacy { margin-top: 8px; }

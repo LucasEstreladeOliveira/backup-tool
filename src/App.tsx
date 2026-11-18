@@ -28,6 +28,18 @@ type Item = {
 
 type Size = { bytes: number; files: number } | "error";
 
+type Device = { key: string; name: string; os: string };
+type DeviceEntry = { folder: string; name: string; os: string; last_backup: string; this_device: boolean };
+
+type Preview = {
+  new_files: number;
+  new_bytes: number;
+  updated_files: number;
+  updated_bytes: number;
+  unchanged_files: number;
+  unchanged_bytes: number;
+};
+
 type Progress = {
   phase: string;
   bytes_done: number;
@@ -41,6 +53,9 @@ type Summary = {
   dest: string;
   files: number;
   bytes: number;
+  new_files: number;
+  updated_files: number;
+  unchanged_files: number;
   secrets_file: string | null;
   cancelled: boolean;
   fatal: string | null;
@@ -89,6 +104,13 @@ export default function App() {
   const [destDir, setDestDir] = useState<string>("");
   const [items, setItems] = useState<Item[]>([]);
   const [sizes, setSizes] = useState<Record<string, Size>>({});
+  const [status, setStatus] = useState<Record<string, Preview>>({});
+  const [existing, setExisting] = useState<string | null>(null);
+  const [device, setDevice] = useState<Device | null>(null);
+  const [label, setLabel] = useState("");
+  const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [legacy, setLegacy] = useState<string[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["shell", "ide", "devtools", "browser", "secrets"]));
   const [skipBuild, setSkipBuild] = useState(true);
@@ -107,6 +129,10 @@ export default function App() {
   // Initial discovery.
   useEffect(() => {
     refreshDrives();
+    invoke<Device>("device_info").then((d) => {
+      setDevice(d);
+      setLabel(d.name);
+    });
     invoke<Item[]>("discover").then((found) => {
       setItems(found);
       setSelected(new Set(found.filter((i) => i.default_selected).map((i) => i.id)));
@@ -137,6 +163,45 @@ export default function App() {
     };
   }, [items, skipBuild]);
 
+  // Compare every item with what is already on the destination (3 at a time).
+  useEffect(() => {
+    setStatus({});
+    setExisting(null);
+    if (!destDir || items.length === 0) return;
+    let cancelled = false;
+    invoke<string | null>("existing_backup", { destDir }).then((p) => !cancelled && setExisting(p));
+    const queue = items.filter((i) => !i.sensitive);
+    const worker = async () => {
+      while (!cancelled) {
+        const item = queue.shift();
+        if (!item) return;
+        try {
+          const p = await invoke<Preview>("preview_item", { id: item.id, destDir, skipBuild });
+          if (!cancelled) setStatus((s) => ({ ...s, [item.id]: p }));
+        } catch {
+          /* item stays on its plain size */
+        }
+      }
+    };
+    for (let i = 0; i < 3; i++) worker();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, destDir, skipBuild, refreshKey]);
+
+  // Who else has a backup on this drive, and are there older unlabelled backups to claim?
+  useEffect(() => {
+    setDevices([]);
+    setLegacy([]);
+    if (!destDir) return;
+    let cancelled = false;
+    invoke<DeviceEntry[]>("list_devices", { destDir }).then((d) => !cancelled && setDevices(d));
+    invoke<string[]>("legacy_backups", { destDir }).then((l) => !cancelled && setLegacy(l));
+    return () => {
+      cancelled = true;
+    };
+  }, [destDir, refreshKey, stage]);
+
   // Backend events.
   useEffect(() => {
     const subs = [
@@ -157,16 +222,22 @@ export default function App() {
     let bytes = 0;
     let files = 0;
     let pending = 0;
+    let unchanged = 0;
     for (const id of selected) {
+      const p = status[id];
       const s = sizes[id];
-      if (!s) pending++;
+      if (p) {
+        bytes += p.new_bytes + p.updated_bytes;
+        files += p.new_files + p.updated_files;
+        unchanged += p.unchanged_files;
+      } else if (!s) pending++;
       else if (s !== "error") {
         bytes += s.bytes;
         files += s.files;
       }
     }
-    return { bytes, files, pending };
-  }, [selected, sizes]);
+    return { bytes, files, pending, unchanged };
+  }, [selected, sizes, status]);
 
   const hasSecrets = items.some((i) => i.sensitive && selected.has(i.id));
   const passOk = !hasSecrets || (pass.length >= 12 && pass === pass2);
@@ -205,6 +276,7 @@ export default function App() {
           skip_build: skipBuild,
           passphrase: hasSecrets ? pass : null,
           export_package_list: exportPkgs,
+          device_label: label.trim() || null,
         },
       });
       startedAt.current = Date.now();
@@ -221,6 +293,16 @@ export default function App() {
       setVerify(await invoke<Verify>("verify_backup", { dest: summary.dest }));
     } catch (e) {
       setVerify(null);
+      setError(String(e));
+    }
+  };
+
+  const adopt = async (folder: string) => {
+    setError(null);
+    try {
+      await invoke("adopt_legacy", { destDir, legacy: folder, label: label.trim() || null });
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
       setError(String(e));
     }
   };
@@ -275,7 +357,8 @@ export default function App() {
         {summary.fatal && <p className="err">{summary.fatal}</p>}
         {!summary.fatal && (
           <p>
-            {summary.files.toLocaleString()} files, {fmtBytes(summary.bytes)} in {fmtTime(summary.seconds)}.
+            {summary.new_files.toLocaleString()} new, {summary.updated_files.toLocaleString()} updated, {summary.unchanged_files.toLocaleString()} already backed up
+            ({fmtBytes(summary.bytes)} written in {fmtTime(summary.seconds)}).
             {summary.secrets_file && " Secrets are saved in an encrypted archive."}
           </p>
         )}
@@ -344,6 +427,39 @@ export default function App() {
           </label>
         </div>
         {destDir && !drive && <p className="muted small">Saving into: {destDir}</p>}
+        {destDir && (
+          <div className="device">
+            <label className="check">
+              This device is called
+              <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={device?.name} disabled={!!existing} />
+              <span className="muted small">key {device?.key}</span>
+            </label>
+            {devices.length > 0 && (
+              <ul className="devices muted small">
+                {devices.map((d) => (
+                  <li key={d.folder}>
+                    {d.name} ({d.os}) · last backup {d.last_backup}
+                    {d.this_device && <span className="badge ok"> this device</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!existing &&
+              legacy.map((f) => (
+                <div key={f} className="legacy warn small">
+                  Found an earlier backup with no device label: {f.split(/[\\/]/).pop()}.{" "}
+                  <button className="ghost" onClick={() => adopt(f)}>
+                    It is from this device - use it
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
+        {destDir && (
+          <p className="muted small">
+            {existing ? `Existing backup found - only new and changed files will be copied: ${existing}` : "No earlier backup here - this will be a full backup."}
+          </p>
+        )}
       </section>
 
       <section className="card">
@@ -399,9 +515,7 @@ export default function App() {
                         <div className="muted small path">{i.path}</div>
                         {i.note && <div className="muted small">{i.note}</div>}
                       </div>
-                      <span className="muted small size">
-                        {s === undefined ? "measuring…" : s === "error" ? "?" : `${fmtBytes(s.bytes)} · ${s.files.toLocaleString()} files`}
-                      </span>
+                      <span className="muted small size">{sizeText(s, status[i.id])}</span>
                     </label>
                   );
                 })}
@@ -430,7 +544,8 @@ export default function App() {
 
       <footer className="bar-bottom">
         <div>
-          <strong>{fmtBytes(totals.bytes)}</strong> · {totals.files.toLocaleString()} files selected
+          <strong>{fmtBytes(totals.bytes)}</strong> · {totals.files.toLocaleString()} files to copy
+          {totals.unchanged > 0 && <span className="okmsg"> · {totals.unchanged.toLocaleString()} already backed up</span>}
           {totals.pending > 0 && <span className="muted"> (measuring {totals.pending} more…)</span>}
           {drive && <span className={tooBig ? "err" : "muted"}> · {fmtBytes(drive.available)} free on drive</span>}
           {tooBig && <span className="err"> — does not fit</span>}
@@ -442,6 +557,20 @@ export default function App() {
       </footer>
     </main>
   );
+}
+
+function sizeText(s: Size | undefined, p: Preview | undefined): string {
+  if (p) {
+    const todo = p.new_files + p.updated_files;
+    if (todo === 0) return p.unchanged_files > 0 ? "✓ already backed up" : "empty";
+    const parts = [`${p.new_files.toLocaleString()} new`];
+    if (p.updated_files > 0) parts.push(`${p.updated_files.toLocaleString()} changed`);
+    parts.push(`${fmtBytes(p.new_bytes + p.updated_bytes)} to copy`);
+    if (p.unchanged_files > 0) parts.push(`${p.unchanged_files.toLocaleString()} up to date`);
+    return parts.join(" · ");
+  }
+  if (s === undefined) return "measuring…";
+  return s === "error" ? "?" : `${fmtBytes(s.bytes)} · ${s.files.toLocaleString()} files`;
 }
 
 function Details({ title, lines, total }: { title: string; lines: string[]; total: number }) {

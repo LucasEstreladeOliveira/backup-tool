@@ -1,7 +1,8 @@
 mod copy;
+mod device;
 mod discover;
 
-use copy::{BackupRequest, Measure, VerifyResult};
+use copy::{BackupRequest, Measure, Preview, VerifyResult};
 use discover::Item;
 use serde::Serialize;
 use std::path::Path;
@@ -96,6 +97,46 @@ async fn measure(state: State<'_, AppState>, id: String, skip_build: bool) -> Re
 }
 
 #[tauri::command]
+fn device_info() -> device::Device {
+    device::current()
+}
+
+/// This device's backup folder on the destination, if it already has one.
+#[tauri::command]
+fn existing_backup(dest_dir: String) -> Option<String> {
+    let root = copy::backup_root(&dest_dir, &device::current(), "");
+    root.is_dir().then(|| root.display().to_string())
+}
+
+/// All devices that have a backup folder on the destination.
+#[tauri::command]
+fn list_devices(dest_dir: String) -> Vec<copy::DeviceEntry> {
+    copy::list_devices(&dest_dir, &device::current())
+}
+
+/// Older unlabelled `Backup-*` folders that this device could claim.
+#[tauri::command]
+fn legacy_backups(dest_dir: String) -> Vec<String> {
+    copy::legacy_backups(&dest_dir)
+}
+
+#[tauri::command]
+fn adopt_legacy(dest_dir: String, legacy: String, label: Option<String>) -> Result<String, String> {
+    copy::adopt_legacy(&dest_dir, &legacy, &device::current(), label.as_deref().unwrap_or(""))
+}
+
+/// What a backup of one item would copy right now, compared with what is already on the destination.
+#[tauri::command]
+async fn preview_item(state: State<'_, AppState>, id: String, dest_dir: String, skip_build: bool) -> Result<Preview, String> {
+    let item = state.items.lock().unwrap().iter().find(|i| i.id == id).cloned().ok_or("unknown item")?;
+    let fat = disk_for(&dest_dir).is_some_and(|(_, fs)| is_fat(&fs));
+    let root = copy::backup_root(&dest_dir, &device::current(), "");
+    tauri::async_runtime::spawn_blocking(move || copy::preview(&item, skip_build, &root, fat))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn start_backup(app: AppHandle, state: State<AppState>, req: BackupRequest) -> Result<(), String> {
     if !Path::new(&req.dest_dir).is_dir() {
         return Err("The destination folder does not exist.".into());
@@ -118,7 +159,7 @@ fn start_backup(app: AppHandle, state: State<AppState>, req: BackupRequest) -> R
     let cancel = state.cancel.clone();
     let running = state.running.clone();
     std::thread::spawn(move || {
-        let summary = copy::run(&app, items, &req, is_fat(&fs), available, &cancel);
+        let summary = copy::run(&app, items, &req, &device::current(), is_fat(&fs), available, &cancel);
         running.store(false, Ordering::SeqCst);
         let _ = app.emit("backup-done", summary);
     });
@@ -153,6 +194,12 @@ pub fn run() {
             list_drives,
             discover,
             measure,
+            device_info,
+            existing_backup,
+            list_devices,
+            legacy_backups,
+            adopt_legacy,
+            preview_item,
             start_backup,
             cancel_backup,
             verify_backup

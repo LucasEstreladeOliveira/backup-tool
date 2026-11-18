@@ -15,10 +15,27 @@ It scans the machine, groups what it finds into categories, lets you choose what
 - Handles illegal filenames on FAT/NTFS targets (renames and logs them); skips symlinks and logs them.
 - Optionally saves a list of installed software (`winget export` / `brew bundle dump`).
 
+## Updating an existing backup
+
+Each device keeps one stable folder on the drive. Running the tool again compares every file with the copy on the drive by size and modified time:
+
+- **new** and **changed** files are copied;
+- **unchanged** files are skipped and keep their hash from the previous `manifest.json`;
+- nothing is ever deleted from the backup, so files you removed from the computer stay in it.
+
+The selection screen shows, per item, how much is already backed up before you start. The secrets archive is rebuilt on each run.
+
+## Several computers, one drive
+
+Each computer gets its own folder, `Backup/<device name>-<key>/`. The key is a short hash of the machine's OS identifier (macOS hardware UUID, Windows `MachineGuid`, Linux `/etc/machine-id`); the raw ID is never stored. A hidden `.backup-device.json` inside the folder records the full key, name, OS and last backup time, and the tool finds a device's folder by that key - so renaming the folder is safe and one computer never touches another's files.
+
+You can change the device name before the first backup. Older unlabelled `Backup-YYYY-MM-DD` folders are offered for adoption once, with an explicit button.
+
 ## Backup layout
 
 ```
-Backup-YYYY-MM-DD/
+Backup/<device name>-<key>/
+  .backup-device.json
   Files/  Projects/  Terminal/  IDE/  DevTools/  Browser/
   Secrets/secrets.tar.age
   Software/
