@@ -3,7 +3,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import "./App.css";
+import type { CSSProperties, ReactNode } from "react";
+import {
+  ArrowRight, Check, ChevronDown, CircleAlert, CircleCheck, Code, FileText, FolderGit2, FolderOpen, Globe, HardDrive, History, Info,
+  KeyRound, Laptop, LoaderCircle, Lock, Monitor, RefreshCw, RotateCcw, ShieldCheck, Terminal, TriangleAlert, Usb, Wrench, X,
+  type LucideIcon,
+} from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Drive = {
   name: string;
@@ -121,6 +138,7 @@ export default function App() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shakeKey, setShakeKey] = useState(0);
   const [verify, setVerify] = useState<Verify | "running" | null>(null);
   const startedAt = useRef(0);
 
@@ -314,7 +332,6 @@ export default function App() {
     setVerify(null);
     refreshDrives();
   };
-
   // ── Views ─────────────────────────────────────────────────────────────
   if (stage === "running") {
     const p = progress;
@@ -322,172 +339,256 @@ export default function App() {
     const elapsed = (Date.now() - startedAt.current) / 1000;
     const rate = p && elapsed > 2 ? p.bytes_done / elapsed : 0;
     const eta = rate > 0 && p ? Math.round((p.bytes_total - p.bytes_done) / rate) : null;
+    const phase = p?.phase === "scanning" ? "Scanning files" : p?.phase === "encrypting" ? "Encrypting secrets" : "Copying";
     return (
-      <main className="wrap narrow">
-        <h1>{p?.phase === "scanning" ? "Scanning files…" : p?.phase === "encrypting" ? "Encrypting secrets…" : "Copying…"}</h1>
-        <div className="bar">
-          <div className="fill" style={{ width: `${pct}%` }} />
+      <main className="stage-enter mx-auto flex min-h-full max-w-xl flex-col justify-center gap-6 px-6 py-10">
+        <div className="flex flex-col gap-1.5">
+          <span className="shimmer text-sm font-medium">{phase}…</span>
+          <h1 className="flex items-baseline gap-1 text-5xl font-semibold tracking-tight tnum">
+            <Num value={pct.toFixed(1)} />
+            <span className="text-2xl text-muted-foreground">%</span>
+          </h1>
         </div>
-        <div className="stats">
-          <span>{pct.toFixed(1)}%</span>
-          <span>
-            {fmtBytes(p?.bytes_done ?? 0)} of {fmtBytes(p?.bytes_total ?? 0)}
-          </span>
-          <span>
-            {(p?.files_done ?? 0).toLocaleString()} / {(p?.files_total ?? 0).toLocaleString()} files
-          </span>
-          {rate > 0 && <span>{fmtBytes(rate)}/s</span>}
-          {eta !== null && <span>~{fmtTime(eta)} left</span>}
-        </div>
-        <p className="current" title={p?.current}>
-          {p?.current}
+        <Progress value={pct} aria-label="Backup progress" />
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-4">
+          <Stat label="Copied" value={`${fmtBytes(p?.bytes_done ?? 0)}`} hint={`of ${fmtBytes(p?.bytes_total ?? 0)}`} />
+          <Stat label="Files" value={(p?.files_done ?? 0).toLocaleString()} hint={`of ${(p?.files_total ?? 0).toLocaleString()}`} />
+          <Stat label="Speed" value={rate > 0 ? `${fmtBytes(rate)}/s` : "-"} />
+          <Stat label="Left" value={eta !== null ? `~${fmtTime(eta)}` : "-"} />
+        </dl>
+        <p className="truncate text-left font-mono text-xs text-muted-foreground" style={{ direction: "rtl" }} title={p?.current}>
+          {p?.current || " "}
         </p>
-        <button className="danger" onClick={() => invoke("cancel_backup")}>
-          Cancel
-        </button>
+        <div>
+          <Button variant="destructive" size="lg" onClick={() => invoke("cancel_backup")}>
+            <X /> Cancel backup
+          </Button>
+        </div>
       </main>
     );
   }
 
   if (stage === "done" && summary) {
     const ok = !summary.fatal && !summary.cancelled && summary.errors_total === 0;
+    const title = summary.fatal ? "Backup could not start" : summary.cancelled ? "Backup cancelled" : ok ? "Backup complete" : "Backup finished with problems";
     return (
-      <main className="wrap narrow">
-        <h1>{summary.fatal ? "Backup could not start" : summary.cancelled ? "Backup cancelled" : ok ? "Backup complete" : "Backup finished with problems"}</h1>
-        {summary.fatal && <p className="err">{summary.fatal}</p>}
-        {!summary.fatal && (
-          <p>
-            {summary.new_files.toLocaleString()} new, {summary.updated_files.toLocaleString()} updated, {summary.unchanged_files.toLocaleString()} already backed up
-            ({fmtBytes(summary.bytes)} written in {fmtTime(summary.seconds)}).
-            {summary.secrets_file && " Secrets are saved in an encrypted archive."}
-          </p>
-        )}
-        <p className="path">{summary.dest}</p>
-        <div className="row">
-          <button onClick={() => revealItemInDir(summary.dest)}>Show in folder</button>
-          {!summary.fatal && (
-            <button onClick={runVerify} disabled={verify === "running"}>
-              {verify === "running" ? "Verifying…" : "Verify copied files"}
-            </button>
+      <main className="stage-enter mx-auto flex min-h-full max-w-xl flex-col justify-center gap-6 px-6 py-10">
+        <div className="flex items-center gap-4">
+          {ok ? (
+            <span className="ok-badge grid size-14 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+              <svg viewBox="0 0 24 24" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12.5l4.5 4.5L19 7.5" />
+              </svg>
+            </span>
+          ) : (
+            <span className="grid size-14 shrink-0 place-items-center rounded-full bg-destructive/10 text-destructive">
+              <TriangleAlert className="size-7" />
+            </span>
           )}
-          <button className="ghost" onClick={reset}>
-            Back
-          </button>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+            {summary.fatal ? (
+              <p className="text-sm text-destructive">{summary.fatal}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {fmtBytes(summary.bytes)} written in {fmtTime(summary.seconds)}
+                {summary.secrets_file && " · secrets saved in an encrypted archive"}
+              </p>
+            )}
+          </div>
         </div>
-        {verify && verify !== "running" && (
-          <p className={verify.bad.length ? "err" : "okmsg"}>
-            {verify.bad.length ? `${verify.bad.length} of ${verify.checked} files failed verification.` : `All ${verify.checked.toLocaleString()} files verified.`}
-          </p>
+
+        {!summary.fatal && (
+          <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border bg-border">
+            <Stat label="New" value={summary.new_files.toLocaleString()} />
+            <Stat label="Updated" value={summary.updated_files.toLocaleString()} />
+            <Stat label="Already there" value={summary.unchanged_files.toLocaleString()} />
+          </dl>
         )}
+
+        <p className="break-all rounded-lg border bg-muted/60 px-3 py-2 font-mono text-xs text-muted-foreground">{summary.dest}</p>
+
+        <div className="flex flex-wrap gap-2">
+          <Button size="lg" onClick={() => revealItemInDir(summary.dest)}>
+            <FolderOpen /> Show in folder
+          </Button>
+          {!summary.fatal && (
+            <Button variant="outline" size="lg" onClick={runVerify} disabled={verify === "running"}>
+              {verify === "running" ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}
+              {verify === "running" ? "Verifying…" : "Verify copied files"}
+            </Button>
+          )}
+          <Button variant="ghost" size="lg" onClick={reset}>
+            <RotateCcw /> Back
+          </Button>
+        </div>
+
+        <Reveal open={!!verify && verify !== "running"}>
+          {verify && verify !== "running" && (
+            <Alert variant={verify.bad.length ? "destructive" : "default"}>
+              {verify.bad.length ? <CircleAlert /> : <CircleCheck className="text-primary" />}
+              <AlertTitle>{verify.bad.length ? `${verify.bad.length} of ${verify.checked.toLocaleString()} files failed verification` : `All ${verify.checked.toLocaleString()} files verified`}</AlertTitle>
+            </Alert>
+          )}
+        </Reveal>
         {verify && verify !== "running" && verify.bad.length > 0 && <Details title="Failed files" lines={verify.bad} total={verify.bad.length} />}
         {summary.errors_total > 0 && <Details title={`Errors (${summary.errors_total})`} lines={summary.errors} total={summary.errors_total} />}
         {summary.skipped_total > 0 && <Details title={`Notes and skipped items (${summary.skipped_total})`} lines={summary.skipped} total={summary.skipped_total} />}
-        {error && <p className="err">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
       </main>
     );
   }
 
   const visibleDrives = drives.filter((d) => showSystem || !d.system);
+  const blocker = !destDir
+    ? "Choose where to save the backup"
+    : selected.size === 0
+      ? "Select something to back up"
+      : !passOk
+        ? "Set a passphrase for your secrets"
+        : tooBig
+          ? "Not enough space on this drive"
+          : null;
 
   return (
-    <main className="wrap">
-      <header>
-        <h1>Backup Tool</h1>
-        <p className="sub">Pick a destination, choose what to keep, and copy it in a tidy, verifiable structure.</p>
-      </header>
-
-      <section className="card">
-        <h2>1 · Destination</h2>
-        <div className="drives">
-          {visibleDrives.length === 0 && <p className="muted">No external drives found. Plug one in, or choose a folder.</p>}
-          {visibleDrives.map((d) => (
-            <label key={d.mount} className={`drive ${destDir === d.mount ? "on" : ""}`}>
-              <input type="radio" name="drive" checked={destDir === d.mount} onChange={() => setDestDir(d.mount)} />
-              <div>
-                <strong>{d.name || d.mount}</strong> <span className="muted">{d.mount}</span>
-                <div className="muted small">
-                  {fmtBytes(d.available)} free of {fmtBytes(d.total)} · {d.fs || "unknown format"}
-                  {d.removable ? " · removable" : ""}
-                  {d.system ? " · system drive" : ""}
-                </div>
-                {isFat(d.fs) && <div className="warn small">FAT32: files over 4 GB will be skipped and listed in the log.</div>}
-              </div>
-            </label>
-          ))}
-        </div>
-        <div className="row">
-          <button className="ghost" onClick={pickFolder}>
-            Choose another folder…
-          </button>
-          <button className="ghost" onClick={refreshDrives}>
-            Refresh drives
-          </button>
-          <label className="check">
-            <input type="checkbox" checked={showSystem} onChange={(e) => setShowSystem(e.target.checked)} /> Show system drive
-          </label>
-        </div>
-        {destDir && !drive && <p className="muted small">Saving into: {destDir}</p>}
-        {destDir && (
-          <div className="device">
-            <label className="check">
-              This device is called
-              <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={device?.name} disabled={!!existing} />
-              <span className="muted small">key {device?.key}</span>
-            </label>
-            {devices.length > 0 && (
-              <ul className="devices muted small">
-                {devices.map((d) => (
-                  <li key={d.folder}>
-                    {d.name} ({d.os}) · last backup {d.last_backup}
-                    {d.this_device && <span className="badge ok"> this device</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!existing &&
-              legacy.map((f) => (
-                <div key={f} className="legacy warn small">
-                  Found an earlier backup with no device label: {f.split(/[\\/]/).pop()}.{" "}
-                  <button className="ghost" onClick={() => adopt(f)}>
-                    It is from this device - use it
-                  </button>
-                </div>
-              ))}
+    <div className="stage-enter min-h-full">
+      <main className="mx-auto flex max-w-[880px] flex-col gap-5 px-6 pb-36 pt-10">
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1.5">
+            <h1 className="rise text-3xl font-semibold tracking-tight" style={{ "--i": 0 } as CSSProperties}>
+              Backup Tool
+            </h1>
+            <p className="rise max-w-md text-balance text-muted-foreground" style={{ "--i": 1 } as CSSProperties}>
+              Pick a drive, choose what to keep, and copy it into a folder you can verify later.
+            </p>
           </div>
-        )}
-        {destDir && (
-          <p className="muted small">
-            {existing ? `Existing backup found - only new and changed files will be copied: ${existing}` : "No earlier backup here - this will be a full backup."}
-          </p>
-        )}
-      </section>
+          {device && (
+            <Badge variant="secondary" className="rise h-7 gap-1.5 px-2.5 text-xs" style={{ "--i": 2 } as CSSProperties}>
+              <Laptop /> {device.name}
+            </Badge>
+          )}
+        </header>
 
-      <section className="card">
-        <h2>2 · What to back up</h2>
-        {items.length === 0 && <p className="muted">Scanning this computer…</p>}
-        {CATEGORIES.map((cat) => {
-          const list = items.filter((i) => i.category === cat.id);
-          if (list.length === 0) return null;
-          const chosen = list.filter((i) => selected.has(i.id));
-          const sized = chosen.reduce((a, i) => {
-            const s = sizes[i.id];
-            return a + (s && s !== "error" ? s.bytes : 0);
-          }, 0);
-          const open_ = !collapsed.has(cat.id);
-          return (
-            <div key={cat.id} className="cat">
-              <div className="cathead">
-                <input
-                  type="checkbox"
-                  checked={chosen.length === list.length}
-                  ref={(el) => {
-                    if (el) el.indeterminate = chosen.length > 0 && chosen.length < list.length;
-                  }}
-                  onChange={(e) => toggleCategory(cat.id, e.target.checked)}
-                />
-                <button
-                  className="expander"
-                  onClick={() =>
+        {/* 1 · Destination */}
+        <Step n={1} title="Destination" done={!!destDir}>
+          {visibleDrives.length === 0 && <p className="text-sm text-muted-foreground">No external drives found. Plug one in, or choose a folder.</p>}
+          <RadioGroup value={destDir} onValueChange={(v) => setDestDir(String(v))} aria-label="Backup destination">
+            {visibleDrives.map((d) => {
+              const on = destDir === d.mount;
+              return (
+                <label
+                  key={d.mount}
+                  className="lift flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-3.5 hover:border-primary/40 has-[[data-checked]]:border-primary has-[[data-checked]]:bg-accent/60"
+                >
+                  <RadioGroupItem value={d.mount} className="mt-1" />
+                  <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                    {d.removable ? <Usb className="size-4" /> : <HardDrive className="size-4" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-medium">{d.name || d.mount}</span>
+                      <span className="truncate text-xs text-muted-foreground">{d.mount}</span>
+                      {d.system && <Badge variant="outline">system drive</Badge>}
+                    </div>
+                    <div className="text-xs text-muted-foreground tnum">
+                      {fmtBytes(d.available)} free of {fmtBytes(d.total)} · {d.fs || "unknown format"}
+                      {d.removable ? " · removable" : ""}
+                    </div>
+                    <DriveMeter drive={d} add={on ? totals.bytes : 0} />
+                    {isFat(d.fs) && (
+                      <div className="mt-1.5 flex items-center gap-1.5 text-xs text-(--warn)">
+                        <TriangleAlert className="size-3.5" /> FAT32: files over 4 GB will be skipped and listed in the log.
+                      </div>
+                    )}
+                  </div>
+                </label>
+              );
+            })}
+          </RadioGroup>
+
+          {destDir && !drive && (
+            <div className="flex items-center gap-2 rounded-xl border border-primary bg-accent/60 p-3 text-sm">
+              <FolderOpen className="size-4 shrink-0 text-primary" />
+              <span className="min-w-0 truncate" title={destDir}>{destDir}</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={pickFolder}>
+              <FolderOpen /> Choose another folder
+            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label="Refresh drives" onClick={refreshDrives} />}>
+                <RefreshCw />
+              </TooltipTrigger>
+              <TooltipContent>Refresh drives</TooltipContent>
+            </Tooltip>
+            <div className="ml-auto flex items-center gap-2">
+              <Switch id="show-system" size="sm" checked={showSystem} onCheckedChange={setShowSystem} />
+              <Label htmlFor="show-system" className="text-sm text-muted-foreground">Show system drive</Label>
+            </div>
+          </div>
+
+          <Reveal open={!!destDir}>
+            <div className="flex flex-col gap-3 border-t pt-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Label htmlFor="device-label" className="text-sm">This device is called</Label>
+                <Input id="device-label" className="h-8 w-56" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={device?.name} disabled={!!existing} />
+                <span className="text-xs text-muted-foreground">key {device?.key}</span>
+              </div>
+              {devices.length > 0 && (
+                <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+                  {devices.map((d) => (
+                    <li key={d.folder} className="flex items-center gap-2">
+                      <Monitor className="size-3.5" />
+                      {d.name} ({d.os}) · last backup {d.last_backup}
+                      {d.this_device && <Badge>this device</Badge>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!existing &&
+                legacy.map((f) => (
+                  <Alert key={f}>
+                    <History />
+                    <AlertTitle>Earlier backup without a device label</AlertTitle>
+                    <AlertDescription>
+                      <span className="flex flex-wrap items-center gap-2">
+                        {f.split(/[\\/]/).pop()}
+                        <Button variant="outline" size="xs" onClick={() => adopt(f)}>It is from this device - use it</Button>
+                      </span>
+                    </AlertDescription>
+                  </Alert>
+                ))}
+              <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                {existing ? <History className="mt-0.5 size-4 shrink-0 text-primary" /> : <Info className="mt-0.5 size-4 shrink-0" />}
+                <span className="min-w-0 break-words">
+                  {existing ? `Existing backup found - only new and changed files will be copied: ${existing}` : "No earlier backup here - this will be a full backup."}
+                </span>
+              </p>
+            </div>
+          </Reveal>
+        </Step>
+
+        {/* 2 · What to back up */}
+        <Step n={2} title="What to back up" done={selected.size > 0} aside={`${selected.size} of ${items.length} selected`}>
+          {items.length === 0 && <p className="shimmer w-fit text-sm">Scanning this computer…</p>}
+          <div className="divide-y overflow-hidden rounded-xl border bg-card">
+            {CATEGORIES.map((cat) => {
+              const list = items.filter((i) => i.category === cat.id);
+              if (list.length === 0) return null;
+              const chosen = list.filter((i) => selected.has(i.id));
+              const sized = chosen.reduce((a, i) => {
+                const s = sizes[i.id];
+                return a + (s && s !== "error" ? s.bytes : 0);
+              }, 0);
+              const isOpen = !collapsed.has(cat.id);
+              const Icon = CATEGORY_ICONS[cat.id] ?? FileText;
+              return (
+                <Collapsible
+                  key={cat.id}
+                  open={isOpen}
+                  onOpenChange={() =>
                     setCollapsed((c) => {
                       const n = new Set(c);
                       n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id);
@@ -495,74 +596,230 @@ export default function App() {
                     })
                   }
                 >
-                  <span>{open_ ? "▾" : "▸"}</span> <strong>{cat.title}</strong>
-                  <span className="muted small"> {cat.blurb}</span>
-                </button>
-                <span className="muted small">
-                  {chosen.length}/{list.length} · {fmtBytes(sized)}
-                </span>
-              </div>
-              {open_ &&
-                list.map((i) => {
-                  const s = sizes[i.id];
-                  return (
-                    <label key={i.id} className="item">
-                      <input type="checkbox" checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
-                      <div className="grow">
-                        <div>
-                          {i.label} {i.sensitive && <span className="badge">encrypted</span>}
+                  <div className="t-acc" data-open={isOpen}>
+                    <div className="flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-muted/50">
+                      <Checkbox
+                        aria-label={`Select all in ${cat.title}`}
+                        checked={chosen.length === list.length}
+                        indeterminate={chosen.length > 0 && chosen.length < list.length}
+                        onCheckedChange={(v) => toggleCategory(cat.id, v)}
+                      />
+                      <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-3 rounded-md py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                        <Icon className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium leading-tight">{cat.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{cat.blurb}</span>
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground tnum">
+                          {chosen.length}/{list.length} · <Num value={fmtBytes(sized)} />
+                        </span>
+                        <span className="t-acc-chevron text-muted-foreground">
+                          <ChevronDown className="size-4" />
+                        </span>
+                      </CollapsibleTrigger>
+                    </div>
+                    <div className="t-acc-panel">
+                      <div className="t-acc-panel-inner" inert={!isOpen}>
+                        <div className="flex flex-col gap-0.5 border-t bg-muted/30 p-1.5">
+                          {list.map((i) => (
+                            <label key={i.id} className="flex cursor-pointer items-start gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-card">
+                              <Checkbox className="mt-0.5" checked={selected.has(i.id)} onCheckedChange={() => toggle(i.id)} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 text-sm">
+                                  {i.label}
+                                  {i.sensitive && (
+                                    <Badge variant="outline" className="gap-1 text-(--warn)">
+                                      <Lock /> encrypted
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="truncate font-mono text-[11px] text-muted-foreground" title={i.path}>{i.path}</div>
+                                {i.note && <div className="text-xs text-muted-foreground">{i.note}</div>}
+                              </div>
+                              <span className="shrink-0 pt-0.5 text-right text-xs text-muted-foreground tnum">
+                                <SizeText s={sizes[i.id]} p={status[i.id]} />
+                              </span>
+                            </label>
+                          ))}
                         </div>
-                        <div className="muted small path">{i.path}</div>
-                        {i.note && <div className="muted small">{i.note}</div>}
                       </div>
-                      <span className="muted small size">{sizeText(s, status[i.id])}</span>
-                    </label>
-                  );
-                })}
-            </div>
-          );
-        })}
-      </section>
-
-      <section className="card">
-        <h2>3 · Options</h2>
-        <label className="check">
-          <input type="checkbox" checked={skipBuild} onChange={(e) => setSkipBuild(e.target.checked)} /> Skip rebuildable folders (node_modules, .next, venv, Rust target…)
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={exportPkgs} onChange={(e) => setExportPkgs(e.target.checked)} /> Save a list of installed software (winget / Homebrew) so it can be reinstalled
-        </label>
-        {hasSecrets && (
-          <div className="pass">
-            <p className="warn small">Secrets are encrypted with this passphrase. If you lose it, they cannot be recovered.</p>
-            <input type="password" placeholder="Passphrase (12+ characters)" value={pass} onChange={(e) => setPass(e.target.value)} />
-            <input type="password" placeholder="Repeat passphrase" value={pass2} onChange={(e) => setPass2(e.target.value)} />
-            {pass2 && pass !== pass2 && <span className="err small">Passphrases don’t match</span>}
+                    </div>
+                  </div>
+                </Collapsible>
+              );
+            })}
           </div>
-        )}
-      </section>
+        </Step>
 
-      <footer className="bar-bottom">
-        <div>
-          <strong>{fmtBytes(totals.bytes)}</strong> · {totals.files.toLocaleString()} files to copy
-          {totals.unchanged > 0 && <span className="okmsg"> · {totals.unchanged.toLocaleString()} already backed up</span>}
-          {totals.pending > 0 && <span className="muted"> (measuring {totals.pending} more…)</span>}
-          {drive && <span className={tooBig ? "err" : "muted"}> · {fmtBytes(drive.available)} free on drive</span>}
-          {tooBig && <span className="err"> — does not fit</span>}
+        {/* 3 · Options */}
+        <Step n={3} title="Options" done>
+          <div className="flex flex-col gap-3">
+            <OptionRow id="skip-build" checked={skipBuild} onChange={setSkipBuild} title="Skip rebuildable folders" hint="node_modules, .next, venv, Rust target and similar" />
+            <OptionRow id="export-pkgs" checked={exportPkgs} onChange={setExportPkgs} title="Save a list of installed software" hint="winget or Homebrew, so you can reinstall it later" />
+          </div>
+          <Reveal open={hasSecrets}>
+            <div className="flex flex-col gap-3 border-t pt-4">
+              <Alert>
+                <Lock />
+                <AlertTitle>Secrets are encrypted with this passphrase</AlertTitle>
+                <AlertDescription>If you lose it, they cannot be recovered.</AlertDescription>
+              </Alert>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input type="password" aria-label="Passphrase" placeholder="Passphrase (12+ characters)" value={pass} onChange={(e) => setPass(e.target.value)} />
+                <div key={shakeKey} className={shakeKey ? "shake" : undefined}>
+                  <Input
+                    type="password"
+                    aria-label="Repeat passphrase"
+                    placeholder="Repeat passphrase"
+                    value={pass2}
+                    aria-invalid={!!pass2 && pass !== pass2}
+                    onChange={(e) => setPass2(e.target.value)}
+                    onBlur={() => pass2 && pass !== pass2 && setShakeKey((k) => k + 1)}
+                  />
+                </div>
+              </div>
+              {pass2 && pass !== pass2 && <p className="text-xs text-destructive">Passphrases don’t match</p>}
+              {pass && pass.length < 12 && <p className="text-xs text-muted-foreground">{12 - pass.length} more characters needed</p>}
+            </div>
+          </Reveal>
+        </Step>
+      </main>
+
+      {/* Summary + action */}
+      <footer className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-[880px] items-center justify-between gap-4 px-6 py-3.5">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-semibold tracking-tight tnum">
+                <Num value={fmtBytes(totals.bytes)} />
+              </span>
+              <span className="text-sm text-muted-foreground tnum">
+                <Num value={`${totals.files.toLocaleString()} files to copy`} />
+              </span>
+            </div>
+            <div className="truncate text-xs text-muted-foreground tnum">
+              {totals.unchanged > 0 && <span className="text-primary">{totals.unchanged.toLocaleString()} already backed up · </span>}
+              {totals.pending > 0 && <span>measuring {totals.pending} more… · </span>}
+              {drive ? (
+                <span className={tooBig ? "text-destructive" : undefined}>
+                  {fmtBytes(drive.available)} free on drive{tooBig ? " - does not fit" : ""}
+                </span>
+              ) : (
+                <span>{blocker ?? "Ready"}</span>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            {error && <span className="max-w-xs truncate text-xs text-destructive" title={error}>{error}</span>}
+            {blocker && drive && <span className="hidden text-xs text-muted-foreground sm:inline">{blocker}</span>}
+            <Button size="lg" className="h-10 px-5 text-sm font-semibold" disabled={!canStart} onClick={start}>
+              Start backup <ArrowRight data-icon="inline-end" />
+            </Button>
+          </div>
         </div>
-        {error && <span className="err small">{error}</span>}
-        <button className="primary" disabled={!canStart} onClick={start}>
-          Start backup
-        </button>
       </footer>
-    </main>
+    </div>
   );
+}
+
+// ── Pieces ──────────────────────────────────────────────────────────────
+
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  files: FileText,
+  projects: FolderGit2,
+  shell: Terminal,
+  ide: Code,
+  devtools: Wrench,
+  browser: Globe,
+  secrets: KeyRound,
+};
+
+/** A value that fades up in place whenever it changes. */
+function Num({ value }: { value: string }) {
+  return (
+    <span key={value} className="num-in">
+      {value}
+    </span>
+  );
+}
+
+/** Collapsing region: grid-rows 0fr -> 1fr, so any content height animates. */
+function Reveal({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div className="t-acc" data-open={open}>
+      <div className="t-acc-panel">
+        <div className="t-acc-panel-inner" inert={!open}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Step({ n, title, done, aside, children }: { n: number; title: string; done: boolean; aside?: string; children: ReactNode }) {
+  return (
+    <Card className="gap-4 py-5">
+      <div className="flex items-center gap-3 px-4">
+        <span className="relative grid size-6 shrink-0 place-items-center rounded-full border text-xs font-medium tnum transition-colors duration-250 data-[done=true]:border-primary data-[done=true]:bg-primary data-[done=true]:text-primary-foreground" data-done={done}>
+          <span className="absolute transition-all duration-250 data-[on=false]:scale-50 data-[on=false]:opacity-0 data-[on=false]:blur-[2px]" data-on={!done}>{n}</span>
+          <Check className="absolute size-3.5 transition-all duration-250" style={{ opacity: done ? 1 : 0, transform: done ? "none" : "scale(0.5)", filter: done ? "none" : "blur(2px)" }} />
+        </span>
+        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+        {aside && <span className="ml-auto text-xs text-muted-foreground tnum">{aside}</span>}
+      </div>
+      <CardContent className="flex flex-col gap-3">{children}</CardContent>
+    </Card>
+  );
+}
+
+function OptionRow({ id, checked, onChange, title, hint }: { id: string; checked: boolean; onChange: (v: boolean) => void; title: string; hint: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+      <Label htmlFor={id} className="flex flex-col items-start gap-0 text-left">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="text-xs font-normal text-muted-foreground">{hint}</span>
+      </Label>
+    </div>
+  );
+}
+
+function DriveMeter({ drive, add }: { drive: Drive; add: number }) {
+  if (drive.total <= 0) return null;
+  const used = ((drive.total - drive.available) / drive.total) * 100;
+  const incoming = Math.min(add, drive.available) / drive.total * 100;
+  const over = add > drive.available;
+  return (
+    <div className="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label={`${used.toFixed(0)}% used`}>
+      <div className="meter-seg h-full bg-foreground/25" style={{ width: `${used}%` }} />
+      <div className={`meter-seg h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${incoming}%` }} />
+    </div>
+  );
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 bg-card px-4 py-3">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-lg font-semibold tracking-tight tnum">
+        <Num value={value} />
+        {hint && <span className="ml-1.5 text-xs font-normal text-muted-foreground">{hint}</span>}
+      </dd>
+    </div>
+  );
+}
+
+function SizeText({ s, p }: { s: Size | undefined; p: Preview | undefined }) {
+  if (!p && s === undefined) return <span className="shimmer">measuring…</span>;
+  const text = sizeText(s, p);
+  const done = p && p.new_files + p.updated_files === 0 && p.unchanged_files > 0;
+  return <span className={done ? "inline-flex items-center gap-1 text-primary" : undefined}>{done && <Check className="size-3" />}<Num value={done ? "already backed up" : text} /></span>;
 }
 
 function sizeText(s: Size | undefined, p: Preview | undefined): string {
   if (p) {
     const todo = p.new_files + p.updated_files;
-    if (todo === 0) return p.unchanged_files > 0 ? "✓ already backed up" : "empty";
+    if (todo === 0) return p.unchanged_files > 0 ? "already backed up" : "empty";
     const parts = [`${p.new_files.toLocaleString()} new`];
     if (p.updated_files > 0) parts.push(`${p.updated_files.toLocaleString()} changed`);
     parts.push(`${fmtBytes(p.new_bytes + p.updated_bytes)} to copy`);
@@ -574,13 +831,25 @@ function sizeText(s: Size | undefined, p: Preview | undefined): string {
 }
 
 function Details({ title, lines, total }: { title: string; lines: string[]; total: number }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="details">
-      <summary>{title}</summary>
-      <pre>
-        {lines.join("\n")}
-        {total > lines.length ? `\n… and ${total - lines.length} more (see backup-log.txt)` : ""}
-      </pre>
-    </details>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="t-acc overflow-hidden rounded-xl border bg-card" data-open={open}>
+        <CollapsibleTrigger className="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-sm font-medium outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50">
+          {title}
+          <span className="t-acc-chevron text-muted-foreground">
+            <ChevronDown className="size-4" />
+          </span>
+        </CollapsibleTrigger>
+        <div className="t-acc-panel">
+          <div className="t-acc-panel-inner" inert={!open}>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all border-t bg-muted/30 p-3 font-mono text-xs">
+              {lines.join("\n")}
+              {total > lines.length ? `\n… and ${total - lines.length} more (see backup-log.txt)` : ""}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </Collapsible>
   );
 }
