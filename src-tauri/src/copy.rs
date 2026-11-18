@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Instant, SystemTime};
 use tauri::{AppHandle, Emitter};
 use walkdir::{DirEntry, WalkDir};
@@ -170,8 +171,11 @@ pub struct BackupRequest {
     pub device_label: Option<String>,
 }
 
+/// Latest progress of the running backup, so a (re)loaded window can pick it up.
+pub static LAST_PROGRESS: Mutex<Option<ProgressEvent>> = Mutex::new(None);
+
 #[derive(Serialize, Clone)]
-struct ProgressEvent {
+pub struct ProgressEvent {
     phase: &'static str,
     bytes_done: u64,
     bytes_total: u64,
@@ -218,6 +222,9 @@ impl Progress<'_> {
     fn emit(&mut self, force: bool) {
         if force || self.last.elapsed().as_millis() >= 120 {
             self.last = Instant::now();
+            if let Ok(mut last) = LAST_PROGRESS.lock() {
+                *last = Some(self.ev.clone());
+            }
             let _ = self.app.emit("backup-progress", self.ev.clone());
         }
     }

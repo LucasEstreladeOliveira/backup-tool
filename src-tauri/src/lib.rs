@@ -6,7 +6,7 @@ use copy::{BackupRequest, Measure, Preview, VerifyResult};
 use discover::Item;
 use serde::Serialize;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
@@ -14,6 +14,7 @@ struct AppState {
     items: Mutex<Vec<Item>>,
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    started_ms: Arc<AtomicU64>,
 }
 
 #[derive(Serialize)]
@@ -155,15 +156,42 @@ fn start_backup(app: AppHandle, state: State<AppState>, req: BackupRequest) -> R
         return Err("A backup is already running.".into());
     }
     state.cancel.store(false, Ordering::SeqCst);
+    if let Ok(mut last) = copy::LAST_PROGRESS.lock() {
+        *last = None;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    state.started_ms.store(now_ms, Ordering::SeqCst);
     let (available, fs) = disk_for(&req.dest_dir).unwrap_or((u64::MAX, String::new()));
     let cancel = state.cancel.clone();
     let running = state.running.clone();
     std::thread::spawn(move || {
         let summary = copy::run(&app, items, &req, &device::current(), is_fat(&fs), available, &cancel);
         running.store(false, Ordering::SeqCst);
+        if let Ok(mut last) = copy::LAST_PROGRESS.lock() {
+            *last = None;
+        }
         let _ = app.emit("backup-done", summary);
     });
     Ok(())
+}
+
+#[derive(Serialize)]
+struct BackupStatus {
+    running: bool,
+    started_ms: u64,
+    progress: Option<copy::ProgressEvent>,
+}
+
+/// Lets the window find out whether a backup is already running (for example after a reload).
+#[tauri::command]
+fn backup_status(state: State<AppState>) -> BackupStatus {
+    BackupStatus {
+        running: state.running.load(Ordering::SeqCst),
+        started_ms: state.started_ms.load(Ordering::SeqCst),
+        progress: copy::LAST_PROGRESS.lock().ok().and_then(|p| p.clone()),
+    }
 }
 
 #[tauri::command]
@@ -189,6 +217,7 @@ pub fn run() {
             items: Mutex::new(Vec::new()),
             cancel: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
+            started_ms: Arc::new(AtomicU64::new(0)),
         })
         .invoke_handler(tauri::generate_handler![
             list_drives,
@@ -202,6 +231,7 @@ pub fn run() {
             preview_item,
             start_backup,
             cancel_backup,
+            backup_status,
             verify_backup
         ])
         .run(tauri::generate_context!())

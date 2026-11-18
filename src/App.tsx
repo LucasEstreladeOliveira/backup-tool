@@ -220,6 +220,18 @@ export default function App() {
     };
   }, [destDir, refreshKey, stage]);
 
+  // A backup may already be running (for example after the window reloaded): take over.
+  useEffect(() => {
+    invoke<{ running: boolean; started_ms: number; progress: Progress | null }>("backup_status")
+      .then((st) => {
+        if (!st.running) return;
+        startedAt.current = st.started_ms || Date.now();
+        setProgress(st.progress);
+        setStage("running");
+      })
+      .catch(() => {});
+  }, []);
+
   // Backend events.
   useEffect(() => {
     const subs = [
@@ -375,7 +387,7 @@ export default function App() {
       <main className="stage-enter mx-auto flex min-h-full max-w-xl flex-col justify-center gap-6 px-6 py-10">
         <div className="flex items-center gap-4">
           {ok ? (
-            <span className="ok-badge grid size-14 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+            <span className="ok-badge grid size-14 shrink-0 place-items-center rounded-full bg-(--success) text-background">
               <svg viewBox="0 0 24 24" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M5 12.5l4.5 4.5L19 7.5" />
               </svg>
@@ -426,7 +438,7 @@ export default function App() {
         <Reveal open={!!verify && verify !== "running"}>
           {verify && verify !== "running" && (
             <Alert variant={verify.bad.length ? "destructive" : "default"}>
-              {verify.bad.length ? <CircleAlert /> : <CircleCheck className="text-primary" />}
+              {verify.bad.length ? <CircleAlert /> : <CircleCheck className="text-(--success)" />}
               <AlertTitle>{verify.bad.length ? `${verify.bad.length} of ${verify.checked.toLocaleString()} files failed verification` : `All ${verify.checked.toLocaleString()} files verified`}</AlertTitle>
             </Alert>
           )}
@@ -698,7 +710,7 @@ export default function App() {
               </span>
             </div>
             <div className="truncate text-xs text-muted-foreground tnum">
-              {totals.unchanged > 0 && <span className="text-primary">{totals.unchanged.toLocaleString()} already backed up · </span>}
+              {totals.unchanged > 0 && <span className="text-(--success)">{totals.unchanged.toLocaleString()} already backed up · </span>}
               {totals.pending > 0 && <span>measuring {totals.pending} more… · </span>}
               {drive ? (
                 <span className={tooBig ? "text-destructive" : undefined}>
@@ -813,7 +825,7 @@ function SizeText({ s, p }: { s: Size | undefined; p: Preview | undefined }) {
   if (!p && s === undefined) return <span className="shimmer">measuring…</span>;
   const text = sizeText(s, p);
   const done = p && p.new_files + p.updated_files === 0 && p.unchanged_files > 0;
-  return <span className={done ? "inline-flex items-center gap-1 text-primary" : undefined}>{done && <Check className="size-3" />}<Num value={done ? "already backed up" : text} /></span>;
+  return <span className={done ? "inline-flex items-center gap-1 text-(--success)" : undefined}>{done && <Check className="size-3" />}<Num value={done ? "already backed up" : text} /></span>;
 }
 
 function sizeText(s: Size | undefined, p: Preview | undefined): string {

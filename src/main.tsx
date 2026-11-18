@@ -4,11 +4,8 @@ import "./index.css";
 import App from "./App";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-// Follow the system theme: shadcn's tokens switch on the `dark` class.
-const scheme = window.matchMedia("(prefers-color-scheme: dark)");
-const applyScheme = () => document.documentElement.classList.toggle("dark", scheme.matches);
-applyScheme();
-scheme.addEventListener("change", applyScheme);
+// Palenight is a dark scheme: shadcn's tokens switch on the `dark` class.
+document.documentElement.classList.add("dark");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -129,53 +129,32 @@
     }
 }
 
-/* ── Theme: warm paper + one green accent ─────────────────────────── */
-:root {
-  --background: oklch(0.975 0.006 95);
-  --foreground: oklch(0.22 0.012 255);
-  --card: oklch(1 0.002 95);
-  --card-foreground: oklch(0.22 0.012 255);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.012 255);
-  --primary: oklch(0.5 0.11 162);
-  --primary-foreground: oklch(0.985 0.01 162);
-  --secondary: oklch(0.95 0.008 95);
-  --secondary-foreground: oklch(0.28 0.012 255);
-  --muted: oklch(0.955 0.007 95);
-  --muted-foreground: oklch(0.5 0.012 255);
-  --accent: oklch(0.95 0.02 162);
-  --accent-foreground: oklch(0.3 0.06 162);
-  --destructive: oklch(0.56 0.2 27);
-  --border: oklch(0.91 0.008 95);
-  --input: oklch(0.89 0.008 95);
-  --ring: oklch(0.6 0.1 162);
-  --warn: oklch(0.58 0.13 70);
+/* ── Theme: Material Palenight (dark only) ────────────────────────── */
+:root, .dark {
+  color-scheme: dark;
+  --background: #292d3e;
+  --foreground: #bfc7d5;
+  --card: #2f3347;
+  --card-foreground: #bfc7d5;
+  --popover: #34384f;
+  --popover-foreground: #bfc7d5;
+  --primary: #c792ea;
+  --primary-foreground: #292d3e;
+  --secondary: #34384f;
+  --secondary-foreground: #bfc7d5;
+  --muted: #32364b;
+  --muted-foreground: #8d93bd;
+  --accent: #3a3f5c;
+  --accent-foreground: #e3e7f7;
+  --destructive: #ff5370;
+  --border: #3b405a;
+  --input: #444867;
+  --ring: #c792ea;
+  --success: #c3e88d;
+  --warn: #ffcb6b;
   --radius: 0.75rem;
-  --shimmer-base: oklch(0.6 0.01 255);
-  --shimmer-highlight: oklch(0.2 0.012 255);
-}
-.dark {
-  --background: oklch(0.175 0.008 255);
-  --foreground: oklch(0.95 0.006 95);
-  --card: oklch(0.215 0.009 255);
-  --card-foreground: oklch(0.95 0.006 95);
-  --popover: oklch(0.24 0.009 255);
-  --popover-foreground: oklch(0.95 0.006 95);
-  --primary: oklch(0.72 0.14 162);
-  --primary-foreground: oklch(0.2 0.04 162);
-  --secondary: oklch(0.26 0.01 255);
-  --secondary-foreground: oklch(0.95 0.006 95);
-  --muted: oklch(0.25 0.01 255);
-  --muted-foreground: oklch(0.7 0.012 255);
-  --accent: oklch(0.29 0.04 162);
-  --accent-foreground: oklch(0.9 0.05 162);
-  --destructive: oklch(0.7 0.17 22);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.6 0.1 162);
-  --warn: oklch(0.8 0.13 75);
-  --shimmer-base: oklch(0.55 0.01 255);
-  --shimmer-highlight: oklch(0.97 0.005 95);
+  --shimmer-base: #676e95;
+  --shimmer-highlight: #eeffff;
 }
 
 /* ── transitions.dev motion tokens (subset used here) ─────────────── */
